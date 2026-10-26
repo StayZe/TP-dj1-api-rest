@@ -45,7 +45,12 @@ async def container(id: str):
     if labels.get("adminapi.managed") != "true":
         raise HTTPException(status_code=404, detail="Not found")
 
-    return data
+    return {
+        "id": data["Id"],
+        "name": data["Name"].lstrip("/"),
+        "image": data["Config"]["Image"],
+        "state": data["State"]["Status"],
+    }
 
 
 @app.post("/containers", status_code=201)

@@ -1,0 +1,370 @@
+# Contrat de la micro-API d'administration (OpenAPI 3.1).
+#
+# Ce fichier fait foi : le vérificateur et la correction s'appuient dessus.
+# Pour le lire confortablement, collez-le dans https://editor.swagger.io
+#
+# Le nom du paramètre de chemin ({identifiant}) est libre. Les chemins, les méthodes,
+# les codes de statut et les champs JSON ne le sont pas.
+#
+# Règles que le schéma ne dit pas :
+#   - seuls les conteneurs portant le label adminapi.managed=true sont visibles ;
+#     tout autre conteneur est traité comme inexistant (404) ;
+#   - GET /containers et GET /containers/{identifiant} exigent un token (admin ou lecteur) ;
+#     les routes d'écriture exigent le token admin (403 avec le token lecteur) ;
+#   - /health, /metrics, /docs et /openapi.json sont ouverts ;
+#   - /webhooks/alerts est protégé par le header X-Webhook-Secret, pas par un token.
+
+openapi: 3.1.0
+info:
+  title: API d'administration de conteneurs
+  description: Pilote les conteneurs Docker étiquetés adminapi.managed=true et répercute leur état dans
+    NetBox.
+  version: 1.0.0
+paths:
+  /health:
+    get:
+      tags:
+      - supervision
+      summary: Vérifie que l'API répond
+      operationId: sante_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Sante Health Get
+  /containers:
+    get:
+      tags:
+      - conteneurs
+      summary: Liste les conteneurs gérés
+      operationId: lister_containers_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Conteneur'
+                type: array
+                title: Response Lister Containers Get
+        '401':
+          description: Token absent ou inconnu
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - conteneurs
+      summary: Crée et démarre un conteneur
+      operationId: creer_containers_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConteneurACreer'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conteneur'
+        '401':
+          description: Token absent ou inconnu
+        '403':
+          description: Token valide mais rôle insuffisant
+        '409':
+          description: Conflit avec l'état actuel
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /containers/{identifiant}:
+    get:
+      tags:
+      - conteneurs
+      summary: Détail d'un conteneur géré
+      operationId: lire_containers__identifiant__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: identifiant
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Identifiant
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conteneur'
+        '401':
+          description: Token absent ou inconnu
+        '404':
+          description: Conteneur inconnu ou non géré par l'API
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - conteneurs
+      summary: Supprime un conteneur
+      operationId: supprimer_containers__identifiant__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: identifiant
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Identifiant
+      responses:
+        '204':
+          description: Successful Response
+        '401':
+          description: Token absent ou inconnu
+        '403':
+          description: Token valide mais rôle insuffisant
+        '404':
+          description: Conteneur inconnu ou non géré par l'API
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /containers/{identifiant}/stop:
+    post:
+      tags:
+      - conteneurs
+      summary: Arrête un conteneur
+      operationId: arreter_containers__identifiant__stop_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: identifiant
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Identifiant
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conteneur'
+        '401':
+          description: Token absent ou inconnu
+        '403':
+          description: Token valide mais rôle insuffisant
+        '404':
+          description: Conteneur inconnu ou non géré par l'API
+        '409':
+          description: Conflit avec l'état actuel
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /containers/{identifiant}/start:
+    post:
+      tags:
+      - conteneurs
+      summary: Démarre un conteneur arrêté
+      operationId: demarrer_containers__identifiant__start_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: identifiant
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Identifiant
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conteneur'
+        '401':
+          description: Token absent ou inconnu
+        '403':
+          description: Token valide mais rôle insuffisant
+        '404':
+          description: Conteneur inconnu ou non géré par l'API
+        '409':
+          description: Conflit avec l'état actuel
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /webhooks/alerts:
+    post:
+      tags:
+      - webhooks
+      summary: Reçoit une alerte et redémarre le conteneur visé
+      operationId: recevoir_alerte_webhooks_alerts_post
+      parameters:
+      - name: x-webhook-secret
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Webhook-Secret
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Alerte'
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '401':
+          description: Secret de webhook absent ou faux
+        '404':
+          description: Conteneur inconnu ou non géré par l'API
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /metrics:
+    get:
+      tags:
+      - supervision
+      summary: Métriques au format Prometheus
+      operationId: metriques_metrics_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            text/plain:
+              schema:
+                type: string
+components:
+  schemas:
+    Alerte:
+      properties:
+        alert:
+          type: string
+          const: container_down
+          title: Alert
+        container:
+          type: string
+          pattern: ^[a-z][a-z0-9-]{1,30}$
+          title: Container
+      type: object
+      required:
+      - alert
+      - container
+      title: Alerte
+    Conteneur:
+      properties:
+        id:
+          type: string
+          title: Id
+        name:
+          type: string
+          title: Name
+        image:
+          type: string
+          title: Image
+        state:
+          type: string
+          title: State
+      type: object
+      required:
+      - id
+      - name
+      - image
+      - state
+      title: Conteneur
+    ConteneurACreer:
+      properties:
+        name:
+          type: string
+          pattern: ^[a-z][a-z0-9-]{1,30}$
+          title: Name
+          examples:
+          - web1
+        image:
+          type: string
+          enum:
+          - nginx:alpine
+          - redis:alpine
+          - httpd:alpine
+          title: Image
+      type: object
+      required:
+      - name
+      - image
+      title: ConteneurACreer
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+  securitySchemes:
+    HTTPBearer:
+      type: http
+      scheme: bearer

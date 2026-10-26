@@ -1,0 +1,101 @@
+# Environnement du cours « API Rest pour l'administration système ».
+#
+#   docker compose up -d          démarre l'API Docker et NetBox
+#   docker compose ps             état des services
+#   docker compose down           arrête tout (les données NetBox sont conservées)
+#   docker compose down -v        arrête tout et efface les données NetBox
+#
+# NetBox met 2 à 5 minutes à démarrer la première fois (création de la base).
+
+name: apirest
+
+services:
+
+  # L'API Docker Engine, exposée en HTTP. On ne publie jamais le socket Docker brut :
+  # ce proxy n'autorise que les familles d'appels listées ci-dessous.
+  docker-api:
+    image: tecnativa/docker-socket-proxy:v0.4.2
+    environment:
+      CONTAINERS: 1        # /containers/...
+      IMAGES: 1            # /images/...
+      INFO: 1              # /info
+      VERSION: 1           # /version
+      POST: 1              # autorise les méthodes d'écriture (POST, DELETE)
+      ALLOW_START: 1
+      ALLOW_STOP: 1
+      ALLOW_RESTARTS: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "127.0.0.1:2375:2375"   # joignable depuis votre machine uniquement
+    restart: unless-stopped
+
+  netbox:
+    image: netboxcommunity/netbox:v4.7-5.1.1
+    depends_on:
+      netbox-postgres:
+        condition: service_healthy
+      netbox-redis:
+        condition: service_started
+    environment:
+      DB_HOST: netbox-postgres
+      DB_NAME: netbox
+      DB_USER: netbox
+      DB_PASSWORD: netbox
+      REDIS_HOST: netbox-redis
+      REDIS_DATABASE: 0
+      REDIS_CACHE_HOST: netbox-redis
+      REDIS_CACHE_DATABASE: 1
+      SECRET_KEY: "cle-de-tp-a-ne-jamais-reutiliser-en-production-0123456789abcdef"
+      API_TOKEN_PEPPER_1: "poivre-de-tp-a-ne-jamais-reutiliser-en-production-0123456789"
+      SKIP_SUPERUSER: "false"
+      SUPERUSER_NAME: admin
+      SUPERUSER_EMAIL: admin@example.org
+      SUPERUSER_PASSWORD: admin
+      GRAPHQL_ENABLED: "false"
+      HOUSEKEEPING_INTERVAL: 86400
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8080/login/ > /dev/null || exit 1"]
+      start_period: 300s
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  netbox-postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: netbox
+      POSTGRES_USER: netbox
+      POSTGRES_PASSWORD: netbox
+    volumes:
+      - netbox-donnees:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -U netbox -d netbox"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  netbox-redis:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+
+  # Votre micro-API : décommentez ce service au TP3, une fois votre Dockerfile écrit.
+  # Dans le réseau de compose, les services se joignent par leur nom, pas par localhost.
+  #
+  # api:
+  #   build: .
+  #   env_file: .env
+  #   environment:
+  #     DOCKER_API_URL: http://docker-api:2375
+  #     NETBOX_URL: http://netbox:8080
+  #   ports:
+  #     - "127.0.0.1:8000:8000"
+  #   depends_on:
+  #     - docker-api
+
+volumes:
+  netbox-donnees:

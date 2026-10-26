@@ -1,9 +1,37 @@
 import json
+import os
+import secrets
+from typing import Optional
 
 import requests
-from fastapi import FastAPI, HTTPException
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, Header, HTTPException
+
+load_dotenv()
 
 app = FastAPI()
+
+
+def get_role(authorization: Optional[str] = Header(default=None)) -> str:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    token = authorization[len("Bearer "):]
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if secrets.compare_digest(token, os.environ.get("API_TOKEN_ADMIN", "")):
+        return "admin"
+    if secrets.compare_digest(token, os.environ.get("API_TOKEN_READER", "")):
+        return "reader"
+
+    raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def require_admin(role: str = Depends(get_role)) -> str:
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return role
 
 
 @app.get("/")
@@ -17,7 +45,7 @@ async def health():
 
 
 @app.get("/containers")
-async def containers():
+async def containers(role: str = Depends(get_role)):
     filters = json.dumps({"label": ["adminapi.managed=true"]})
     response = requests.get(
         "http://127.0.0.1:2375/containers/json",
@@ -35,7 +63,7 @@ async def containers():
 
 
 @app.get("/containers/{id}")
-async def container(id: str):
+async def container(id: str, role: str = Depends(get_role)):
     response = requests.get(f"http://127.0.0.1:2375/containers/{id}/json")
     if response.status_code != 200:
         raise HTTPException(status_code=404, detail="Not found")
@@ -54,7 +82,7 @@ async def container(id: str):
 
 
 @app.post("/containers", status_code=201)
-async def create_container(request: dict):
+async def create_container(request: dict, role: str = Depends(require_admin)):
     name = request.get("name", "")
     image = request.get("image")
 
@@ -91,7 +119,7 @@ async def create_container(request: dict):
 
 
 @app.post("/containers/{id}/stop")
-async def stop_container(id: str):
+async def stop_container(id: str, role: str = Depends(require_admin)):
     response = requests.post(f"http://127.0.0.1:2375/containers/{id}/stop")
     if response.status_code == 404:
         raise HTTPException(status_code=404, detail="Not found")
@@ -103,7 +131,7 @@ async def stop_container(id: str):
 
 
 @app.post("/containers/{id}/start")
-async def start_container(id: str):
+async def start_container(id: str, role: str = Depends(require_admin)):
     response = requests.post(f"http://127.0.0.1:2375/containers/{id}/start")
     if response.status_code == 404:
         raise HTTPException(status_code=404, detail="Not found")
@@ -115,7 +143,7 @@ async def start_container(id: str):
 
 
 @app.delete("/containers/{id}", status_code=204)
-async def delete_container(id: str):
+async def delete_container(id: str, role: str = Depends(require_admin)):
     response = requests.delete(f"http://127.0.0.1:2375/containers/{id}", params={"force": 1})
     if response.status_code == 404:
         raise HTTPException(status_code=404, detail="Not found")

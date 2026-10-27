@@ -33,6 +33,60 @@ def require_admin(role: str = Depends(get_role)) -> str:
         raise HTTPException(status_code=403, detail="Forbidden")
     return role
 
+def netbox_headers():
+    return {
+        "Authorization": "Token " + os.environ["NETBOX_TOKEN"],
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def netbox_url(path):
+    return os.environ["NETBOX_URL"].rstrip("/") + "/api/virtualization/" + path
+
+
+def netbox_find_vm(name):
+    response = requests.get(
+        netbox_url("virtual-machines/"),
+        headers=netbox_headers(),
+        params={"name": name},
+    )
+    results = response.json()["results"]
+    return results[0] if results else None
+
+
+def netbox_create_vm(name):
+    cluster_response = requests.get(
+        netbox_url("clusters/"),
+        headers=netbox_headers(),
+        params={"name": "docker-local"},
+    )
+    cluster = cluster_response.json()["results"][0]
+    requests.post(
+        netbox_url("virtual-machines/"),
+        headers=netbox_headers(),
+        json={"name": name, "cluster": cluster["id"], "status": "active"},
+    )
+
+
+def netbox_set_status(name, status):
+    vm = netbox_find_vm(name)
+    if vm:
+        requests.patch(
+            netbox_url(f"virtual-machines/{vm['id']}/"),
+            headers=netbox_headers(),
+            json={"status": status},
+        )
+
+
+def netbox_delete_vm(name):
+    vm = netbox_find_vm(name)
+    if vm:
+        requests.delete(
+            netbox_url(f"virtual-machines/{vm['id']}/"),
+            headers=netbox_headers(),
+        )
+
 
 @app.get("/")
 async def root():
@@ -109,6 +163,8 @@ async def create_container(request: dict, role: str = Depends(require_admin)):
     container_id = response.json()["Id"]
     requests.post(f"http://127.0.0.1:2375/containers/{container_id}/start")
 
+    netbox_create_vm(name)
+
     info = requests.get(f"http://127.0.0.1:2375/containers/{container_id}/json").json()
     return {
         "id": container_id,
@@ -127,6 +183,7 @@ async def stop_container(id: str, role: str = Depends(require_admin)):
         raise HTTPException(status_code=409, detail="already stopped")
 
     info = requests.get(f"http://127.0.0.1:2375/containers/{id}/json").json()
+    netbox_set_status(info["Name"].lstrip("/"), "offline")
     return {"id": id, "state": info["State"]["Status"]}
 
 
@@ -139,12 +196,17 @@ async def start_container(id: str, role: str = Depends(require_admin)):
         raise HTTPException(status_code=409, detail="already started")
 
     info = requests.get(f"http://127.0.0.1:2375/containers/{id}/json").json()
+    netbox_set_status(info["Name"].lstrip("/"), "active")
     return {"id": id, "state": info["State"]["Status"]}
 
 
 @app.delete("/containers/{id}", status_code=204)
 async def delete_container(id: str, role: str = Depends(require_admin)):
-    response = requests.delete(f"http://127.0.0.1:2375/containers/{id}", params={"force": 1})
-    if response.status_code == 404:
+    info_response = requests.get(f"http://127.0.0.1:2375/containers/{id}/json")
+    if info_response.status_code == 404:
         raise HTTPException(status_code=404, detail="Not found")
+    name = info_response.json()["Name"].lstrip("/")
+
+    requests.delete(f"http://127.0.0.1:2375/containers/{id}", params={"force": 1})
+    netbox_delete_vm(name)
     return None

@@ -20,6 +20,10 @@ ERR_401 = {401: {"description": "Token absent ou inconnu"}}
 ERR_403 = {403: {"description": "Token valide mais rôle lecteur"}}
 
 
+def docker_url(path):
+    return os.environ["DOCKER_API_URL"].rstrip("/") + path
+
+
 def get_role(authorization: Optional[str] = Header(default=None)) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -115,7 +119,7 @@ async def health():
 async def containers(role: str = Depends(get_role)):
     filters = json.dumps({"label": ["adminapi.managed=true"]})
     response = requests.get(
-        "http://127.0.0.1:2375/containers/json",
+        docker_url("/containers/json"),
         params={"all": 1, "filters": filters},
     )
     return [
@@ -135,7 +139,7 @@ async def containers(role: str = Depends(get_role)):
     responses={**ERR_401, 404: {"description": "Conteneur inconnu ou non géré"}},
 )
 async def container(id: str, role: str = Depends(get_role)):
-    response = requests.get(f"http://127.0.0.1:2375/containers/{id}/json")
+    response = requests.get(docker_url(f"/containers/{id}/json"))
     if response.status_code != 200:
         raise HTTPException(status_code=404, detail="Not found")
 
@@ -178,7 +182,7 @@ async def create_container(request: dict, role: str = Depends(require_admin)):
 
     body = {"Image": image, "Labels": {"adminapi.managed": "true"}}
     response = requests.post(
-        "http://127.0.0.1:2375/containers/create",
+        docker_url("/containers/create"),
         params={"name": name},
         json=body,
     )
@@ -188,11 +192,11 @@ async def create_container(request: dict, role: str = Depends(require_admin)):
         raise HTTPException(status_code=response.status_code, detail=response.json().get("message"))
 
     container_id = response.json()["Id"]
-    requests.post(f"http://127.0.0.1:2375/containers/{container_id}/start")
+    requests.post(docker_url(f"/containers/{container_id}/start"))
 
     netbox_create_vm(name)
 
-    info = requests.get(f"http://127.0.0.1:2375/containers/{container_id}/json").json()
+    info = requests.get(docker_url(f"/containers/{container_id}/json")).json()
     return {
         "id": container_id,
         "name": name,
@@ -212,13 +216,13 @@ async def create_container(request: dict, role: str = Depends(require_admin)):
     },
 )
 async def stop_container(id: str, role: str = Depends(require_admin)):
-    response = requests.post(f"http://127.0.0.1:2375/containers/{id}/stop")
+    response = requests.post(docker_url(f"/containers/{id}/stop"))
     if response.status_code == 404:
         raise HTTPException(status_code=404, detail="Not found")
     if response.status_code == 304:
         raise HTTPException(status_code=409, detail="already stopped")
 
-    info = requests.get(f"http://127.0.0.1:2375/containers/{id}/json").json()
+    info = requests.get(docker_url(f"/containers/{id}/json")).json()
     netbox_set_status(info["Name"].lstrip("/"), "offline")
     return {"id": id, "state": info["State"]["Status"]}
 
@@ -234,13 +238,13 @@ async def stop_container(id: str, role: str = Depends(require_admin)):
     },
 )
 async def start_container(id: str, role: str = Depends(require_admin)):
-    response = requests.post(f"http://127.0.0.1:2375/containers/{id}/start")
+    response = requests.post(docker_url(f"/containers/{id}/start"))
     if response.status_code == 404:
         raise HTTPException(status_code=404, detail="Not found")
     if response.status_code == 304:
         raise HTTPException(status_code=409, detail="already started")
 
-    info = requests.get(f"http://127.0.0.1:2375/containers/{id}/json").json()
+    info = requests.get(docker_url(f"/containers/{id}/json")).json()
     netbox_set_status(info["Name"].lstrip("/"), "active")
     return {"id": id, "state": info["State"]["Status"]}
 
@@ -256,12 +260,12 @@ async def start_container(id: str, role: str = Depends(require_admin)):
     },
 )
 async def delete_container(id: str, role: str = Depends(require_admin)):
-    info_response = requests.get(f"http://127.0.0.1:2375/containers/{id}/json")
+    info_response = requests.get(docker_url(f"/containers/{id}/json"))
     if info_response.status_code == 404:
         raise HTTPException(status_code=404, detail="Not found")
     name = info_response.json()["Name"].lstrip("/")
 
-    requests.delete(f"http://127.0.0.1:2375/containers/{id}", params={"force": 1})
+    requests.delete(docker_url(f"/containers/{id}"), params={"force": 1})
     netbox_delete_vm(name)
     return None
 
@@ -287,13 +291,13 @@ async def alert(request: dict, x_webhook_secret: Optional[str] = Header(default=
         raise HTTPException(status_code=422, detail="unknown alert type")
 
     name = request.get("container", "")
-    check = requests.get(f"http://127.0.0.1:2375/containers/{name}/json")
+    check = requests.get(docker_url(f"/containers/{name}/json"))
     if check.status_code == 404:
         raise HTTPException(status_code=404, detail="Not found")
 
     # 204 : le conteneur a été redémarré, c'est une remédiation.
     # 304 : il tournait déjà, on ne compte rien.
-    start = requests.post(f"http://127.0.0.1:2375/containers/{name}/start")
+    start = requests.post(docker_url(f"/containers/{name}/start"))
     if start.status_code == 204:
         remediations += 1
 
@@ -308,7 +312,7 @@ async def alert(request: dict, x_webhook_secret: Optional[str] = Header(default=
 async def metrics():
     filters = json.dumps({"label": ["adminapi.managed=true"]})
     response = requests.get(
-        "http://127.0.0.1:2375/containers/json",
+        docker_url("/containers/json"),
         params={"all": "true", "filters": filters},
     )
 
